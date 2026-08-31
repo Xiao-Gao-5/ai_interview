@@ -1,390 +1,272 @@
-import uuid
+from __future__ import annotations
+
 import json
 import re
-from .llm import call_qwen
-from .rag_engine import SimpleRAG
+import uuid
 
-rag = SimpleRAG()
+from .llm import call_qwen
+from .nlp_scoring import SemanticScorer
+from .rag_engine import VectorRAG
+
+rag = VectorRAG()
+scorer = SemanticScorer()
+sessions: dict[str, "InterviewSession"] = {}
 
 
 class InterviewSession:
-    """管理单次面试的完整状态与流程"""
-
-    def __init__(self, resume_info):
+    def __init__(self, resume_info: dict):
         self.session_id = str(uuid.uuid4())
-        self.resume = resume_info
-        self.history = []
+        self.resume = resume_info or {}
+        self.history: list[dict[str, str]] = []
         self.phase = "greeting"
         self.basic_count = 0
         self.max_basic = 3
         self.project_index = 0
-        self.projects = self._extract_projects()
         self.project_q_count = 0
         self.max_project_q = 3
         self.follow_up_count = 0
-        self.max_follow_up = 2
-        self.answers_eval = []
-        self.profile = ""
-        self._generate_profile()
+        self.max_follow_up = 1
+        self.answers_eval: list[dict] = []
+        self.projects = self._extract_projects()
+        self.profile = self._generate_profile()
 
-    def _extract_projects(self):
-        text = self.resume.get("raw_text", "")
-        parts = re.split(
-            r'项目经历|项目经验|实习经历|实践经历|项目名称|Project Experience|Projects|工作经历',
-            text,
-            flags=re.IGNORECASE
-        )
-        projects = []
-        for p in parts[1:]:
-            clean = p.strip()
-            if len(clean) > 30:
-                projects.append(clean[:500])
-        if not projects:
-            projects = [text[:500]]
-        return projects[:3]
-
-    def _generate_profile(self):
-        skills = ", ".join(self.resume.get("skills", []))
-        edu = self.resume.get("education", "未知")
-        prompt = f"""基于以下简历信息，生成一段简洁的用户画像和面试重点（80字以内）：
-技能：{skills}
-学历：{edu}
-简历摘要：{self.resume.get('raw_text', '')[:300]}
-
-要求：直接输出画像内容，不要有任何前缀说明。
-"""
-        self.profile = call_qwen(prompt, temperature=0.5) or "该同学具备相关技术背景。"
-
-    def next_interviewer_action(self, user_answer=None):
-        if user_answer is not None:
+    def next_interviewer_action(self, user_answer: str | None = None) -> tuple[str, bool]:
+        if user_answer:
             self.history.append({"role": "candidate", "content": user_answer})
-
-            # 检测用户是否指出重复
-            if self._is_user_complaining_repeat(user_answer):
-                # 强制跳过追问，直接换新题
+            if self._is_repeat_complaint(user_answer):
                 self.follow_up_count = self.max_follow_up
-                self.answers_eval.append({
-                    "accuracy": 5, "completeness": 5, "logic": 5, "depth": 5,
-                    "comment": "用户指出题目重复", "key_tech": []
-                })
             else:
                 self.answers_eval.append(self._evaluate_answer(user_answer))
 
         if self.phase == "greeting":
             self.phase = "basic"
-            self.basic_count = 0
-            self.follow_up_count = 0
-            profile_msg = f"你好！我是AI面试官。{self.profile}\n\n让我们开始面试。首先考察基础知识："
-            self.history.append({"role": "interviewer", "content": profile_msg})
-            q = self._generate_basic_question()
-            self.history.append({"role": "interviewer", "content": q})
-            return f"{profile_msg}\n\n【问题】{q}", False
+            greeting = f"你好，我是 AI 面试官。{self.profile}\n\n我们先从基础知识开始。"
+            question = self._generate_basic_question()
+            self._record_interviewer(question)
+            return f"{greeting}\n\n【问题】{question}", False
 
-        elif self.phase == "basic":
-            # 检查是否追问
-            if (self.answers_eval and
-                    self.follow_up_count < self.max_follow_up and
-                    self.answers_eval[-1].get("accuracy", 0) >= 6 and
-                    self.answers_eval[-1].get("comment", "") != "用户指出题目重复"):
-                self.follow_up_count += 1
-                q = self._generate_followup_question()
-                self.history.append({"role": "interviewer", "content": q})
-                return f"【追问】{q}", False
+        if self.phase == "basic":
+            if self._should_follow_up("accuracy"):
+                question = self._generate_followup_question()
+                self._record_interviewer(question)
+                return f"【追问】{question}", False
 
             self.follow_up_count = 0
             self.basic_count += 1
-
             if self.basic_count >= self.max_basic:
                 self.phase = "project"
-                self.project_q_count = 0
-                self.follow_up_count = 0
-                trans_msg = "基础知识考察结束。接下来聊聊你的项目经历："
-                self.history.append({"role": "interviewer", "content": trans_msg})
-                q = self._generate_project_question()
-                self.history.append({"role": "interviewer", "content": q})
-                return f"{trans_msg}\n\n【问题】{q}", False
+                question = self._generate_project_question()
+                self._record_interviewer(question)
+                return f"基础知识部分结束。接下来聊聊你的项目经历。\n\n【问题】{question}", False
 
-            q = self._generate_basic_question()
-            self.history.append({"role": "interviewer", "content": q})
-            return f"【问题】{q}", False
+            question = self._generate_basic_question()
+            self._record_interviewer(question)
+            return f"【问题】{question}", False
 
-        elif self.phase == "project":
-            if (self.answers_eval and
-                    self.follow_up_count < self.max_follow_up and
-                    self.answers_eval[-1].get("depth", 0) >= 6 and
-                    self.answers_eval[-1].get("comment", "") != "用户指出题目重复"):
-                self.follow_up_count += 1
-                q = self._generate_project_deep_question()
-                self.history.append({"role": "interviewer", "content": q})
-                return f"【追问】{q}", False
+        if self.phase == "project":
+            if self._should_follow_up("depth"):
+                question = self._generate_project_deep_question()
+                self._record_interviewer(question)
+                return f"【追问】{question}", False
 
             self.follow_up_count = 0
             self.project_q_count += 1
-
             if self.project_q_count >= self.max_project_q:
                 self.project_index += 1
                 self.project_q_count = 0
                 if self.project_index >= len(self.projects):
                     self.phase = "scoring"
                     return self._generate_final_feedback(), True
-                trans_msg = f"我们来看下一个项目（{self.project_index + 1}/{len(self.projects)}）："
-                self.history.append({"role": "interviewer", "content": trans_msg})
-                q = self._generate_project_question()
-                self.history.append({"role": "interviewer", "content": q})
-                return f"{trans_msg}\n\n【问题】{q}", False
 
-            q = self._generate_project_question()
-            self.history.append({"role": "interviewer", "content": q})
-            return f"【问题】{q}", False
+            question = self._generate_project_question()
+            self._record_interviewer(question)
+            return f"【问题】{question}", False
 
-        elif self.phase == "scoring":
-            return self._generate_final_feedback(), True
+        return self._generate_final_feedback(), True
 
-        return "面试结束。", True
+    def _record_interviewer(self, content: str) -> None:
+        self.history.append({"role": "interviewer", "content": content})
 
-    def _is_user_complaining_repeat(self, answer):
-        """检测用户是否在抱怨题目重复"""
-        keywords = ["重复", "一样", "相同", "刚才问过", "已经问过", "换题", "换个问题"]
-        answer_lower = answer.lower()
-        return any(k in answer_lower for k in keywords)
+    def _extract_projects(self) -> list[str]:
+        text = self.resume.get("experience") or self.resume.get("raw_text", "")
+        if not text:
+            return ["候选人的简历中未提取到明确项目，请围绕其技能栈展开项目经验追问。"]
 
-    def _get_recent_questions(self, n=5):
-        """获取最近问过的问题文本，用于去重"""
-        qs = []
-        for h in reversed(self.history):
-            if h["role"] == "interviewer":
-                content = h["content"]
-                # 提取【问题】或【追问】后面的内容
-                if "【问题】" in content:
-                    q_text = content.split("【问题】")[-1].strip()
-                    qs.append(q_text)
-                elif "【追问】" in content:
-                    q_text = content.split("【追问】")[-1].strip()
-                    qs.append(q_text)
-                if len(qs) >= n:
-                    break
-        return qs
+        parts = re.split(
+            r"项目经历|项目经验|实习经历|实践经历|工作经历|Project Experience|Projects|Internship|Work Experience",
+            text,
+            flags=re.IGNORECASE,
+        )
+        projects = [part.strip()[:600] for part in parts if len(part.strip()) > 30]
+        return projects[:3] or [text[:600]]
 
-    def _generate_basic_question(self):
-        skills = self.resume.get("skills", [])
-        skill_str = ", ".join(skills) if skills else "计算机基础"
-        docs, _ = rag.retrieve(f"{skill_str} 面试题", top_k=2)
-        context = "\n".join([f"知识点：{d['question']}" for d in docs])
+    def _generate_profile(self) -> str:
+        skills = ", ".join(self.resume.get("skills", [])) or "未提取到明确技能"
+        education = self.resume.get("education") or "未知"
+        prompt = f"""基于候选人简历生成一句 80 字以内的面试画像，只输出画像内容。
 
-        recent_qs = self._get_recent_questions(5)
-        avoid_text = ""
-        if recent_qs:
-            avoid_text = f"\n\n已问过的问题（绝对不要重复类似题目，必须换完全不同的方向）：\n" + "\n".join(
-                [f"{i + 1}. {q}" for i, q in enumerate(recent_qs)])
-
-        prompt = f"""你是AI面试官。基于候选人的技能栈({skill_str})和以下相关知识点，生成一道基础面试题：
-
-相关知识点：
-{context}
-{avoid_text}
-
-要求：
-1. 问题与技能栈强相关，但类型要多样化（概念、原理、场景、代码均可）
-2. 难度适中，适合校招/实习面试
-3. 只输出问题本身，不要有任何解释、答案或前缀
-4. 如果已问过的问题和技能栈相关，请换一个完全不同的技术方向出题
+技能：{skills}
+学历：{education}
+简历摘要：{self.resume.get("raw_text", "")[:500]}
 """
-        q = call_qwen(prompt, temperature=0.9)
-        return q or "请介绍一下你最熟悉的数据结构及其应用场景。"
+        return call_qwen(prompt, temperature=0.4) or f"我会围绕 {skills}、项目经历和基础能力进行考察。"
 
-    def _generate_followup_question(self):
-        """基于上一轮回答生成追问"""
-        last_answer = ""
-        last_q = ""
-        for h in reversed(self.history):
-            if h["role"] == "candidate" and not last_answer:
-                last_answer = h["content"]
-            if h["role"] == "interviewer" and not last_q:
-                last_q = h["content"]
-            if last_answer and last_q:
-                break
+    def _generate_basic_question(self) -> str:
+        skills = ", ".join(self.resume.get("skills", [])) or "计算机基础"
+        docs, _ = rag.retrieve(f"{skills} 面试题", top_k=3)
+        context = "\n".join(
+            f"- {doc.get('question', '')}：{doc.get('answer', '')[:160]}" for doc in docs
+        )
+        recent = "\n".join(f"- {q}" for q in self._recent_questions())
+        prompt = f"""你是技术面试官。请基于候选人技能和知识库生成一道基础技术面试题，只输出问题。
 
-        prompt = f"""你是AI面试官。候选人刚才回答了以下问题，请针对回答中的技术细节追问一个更深入的问题：
+候选人技能：{skills}
+
+知识库片段：
+{context}
+
+已经问过的问题，避免重复：
+{recent or "无"}
+
+要求：问题具体、适合校招或实习面试，可考察概念、原理、场景或代码思路。
+"""
+        return call_qwen(prompt, temperature=0.8) or "请介绍一个你熟悉的数据结构，并说明它适合解决什么问题。"
+
+    def _generate_followup_question(self) -> str:
+        last_q = self._last_by_role("interviewer")
+        last_answer = self._last_by_role("candidate")
+        prompt = f"""你是技术面试官。请针对候选人刚才的回答生成一个更深入但具体的追问，只输出问题。
 
 原问题：{last_q}
-候选人回答：{last_answer[:300]}
-
-要求：
-1. 追问回答中提到的具体技术点、原理或实现细节
-2. 问题要更具体，不要泛泛而谈
-3. 只输出问题本身
+候选人回答：{last_answer[:500]}
 """
-        q = call_qwen(prompt, temperature=0.7)
-        return q or "你能详细解释一下刚才提到的技术原理吗？"
+        self.follow_up_count += 1
+        return call_qwen(prompt, temperature=0.6) or "你能进一步说明其中的关键原理和边界情况吗？"
 
-    def _generate_project_question(self):
-        project = self.projects[self.project_index] if self.project_index < len(self.projects) else "你的项目"
-        prompt = f"""你是AI面试官。针对以下项目描述，生成一个面试问题：
+    def _generate_project_question(self) -> str:
+        project = self.projects[min(self.project_index, len(self.projects) - 1)]
+        prompt = f"""你是技术面试官。请基于下面项目经历生成一个开放但具体的面试问题，只输出问题。
 
-项目描述：{project[:400]}
+项目经历：
+{project[:700]}
 
-要求：
-1. 围绕项目背景、技术选型、个人职责、项目成果提问
-2. 问题开放，让候选人能展开描述
-3. 只输出问题本身
+要求：优先考察候选人的职责、技术选型、实现难点、性能优化或结果复盘。
 """
-        q = call_qwen(prompt, temperature=0.8)
-        return q or "请详细描述一下这个项目的背景、你在其中的职责以及使用的技术栈。"
+        return call_qwen(prompt, temperature=0.75) or "请介绍一个你参与最深的项目，包括你的职责、技术方案和遇到的难点。"
 
-    def _generate_project_deep_question(self):
-        """项目深挖追问"""
-        last_answer = ""
-        for h in reversed(self.history):
-            if h["role"] == "candidate":
-                last_answer = h["content"]
-                break
+    def _generate_project_deep_question(self) -> str:
+        project = self.projects[min(self.project_index, len(self.projects) - 1)]
+        answer = self._last_by_role("candidate")
+        prompt = f"""你是技术面试官。请基于项目背景和候选人回答生成一个技术深挖追问，只输出问题。
 
-        project = self.projects[self.project_index] if self.project_index < len(self.projects) else ""
-
-        prompt = f"""你是AI面试官。候选人在介绍项目时提到了以下内容，请针对其中的技术细节进行深挖追问：
-
-项目背景：{project[:300]}
-候选人回答：{last_answer[:300]}
-
-要求：
-1. 追问具体技术原理（如：为什么选这个技术？有没有考虑过替代方案？）
-2. 追问性能、优化、难点解决
-3. 只输出问题本身
+项目背景：{project[:500]}
+候选人回答：{answer[:500]}
 """
-        q = call_qwen(prompt, temperature=0.7)
-        return q or "你提到使用了某些技术，能详细说明一下选型原因和实现细节吗？"
+        self.follow_up_count += 1
+        return call_qwen(prompt, temperature=0.6) or "这个方案在性能、可靠性或扩展性上有哪些取舍？"
 
-    def _evaluate_answer(self, answer):
-        last_q = ""
-        for h in reversed(self.history):
-            if h["role"] == "interviewer":
-                last_q = h["content"]
-                break
+    def _evaluate_answer(self, answer: str) -> dict:
+        question = self._last_by_role("interviewer")
+        docs, _ = rag.retrieve(question, top_k=3)
+        reference = "\n".join(
+            f"{doc.get('question', '')}\n{doc.get('answer', '')}" for doc in docs
+        )
+        return scorer.evaluate_answer(question, answer, reference)
 
-        docs, _ = rag.retrieve(last_q, top_k=2)
-        ref_answers = "\n".join([f"参考：{d['answer'][:200]}" for d in docs])
-
-        prompt = f"""评估以下面试回答（输出严格JSON格式，不要markdown标记）：
-
-问题：{last_q}
-候选人回答：{answer}
-
-相关知识点参考：
-{ref_answers}
-
-请从以下维度评分（1-10分），并给出简要评价：
-- accuracy（准确性）：技术细节是否正确
-- completeness（完整性）：是否覆盖问题要点
-- logic（逻辑性）：表达是否清晰有条理
-- depth（深度）：是否有深入思考或扩展
-
-输出格式：
-{{"accuracy": 8, "completeness": 7, "logic": 8, "depth": 6, "comment": "评价...", "key_tech": ["提到的技术1"]}}
-"""
-        result = call_qwen(prompt, temperature=0.3)
-        try:
-            json_match = re.search(r'\{.*\}', result, re.DOTALL)
-            if json_match:
-                eval_data = json.loads(json_match.group())
-                for key in ["accuracy", "completeness", "logic", "depth"]:
-                    if key not in eval_data:
-                        eval_data[key] = 7
-                if "comment" not in eval_data:
-                    eval_data["comment"] = "回答尚可，有提升空间。"
-                if "key_tech" not in eval_data:
-                    eval_data["key_tech"] = []
-                return eval_data
-        except Exception:
-            pass
-        return {"accuracy": 7, "completeness": 7, "logic": 7, "depth": 6, "comment": "回答尚可，有提升空间。",
-                "key_tech": []}
-
-    def _generate_final_feedback(self):
+    def _generate_final_feedback(self) -> str:
         if not self.answers_eval:
-            return json.dumps({
+            feedback = {
                 "total_score": 60.0,
-                "dimensions": {"基础知识掌握程度": 60, "项目理解深度": 60, "回答逻辑性": 60, "表达完整性": 60,
-                               "岗位匹配度": 60},
-                "report": "未能获取足够信息生成详细报告。",
-                "details": []
-            }, ensure_ascii=False)
+                "dimensions": {
+                    "基础知识掌握程度": 60.0,
+                    "项目理解深度": 60.0,
+                    "回答逻辑性": 60.0,
+                    "表达完整性": 60.0,
+                    "岗位匹配度": 60.0,
+                },
+                "report": "面试信息不足，建议补充完整回答后再生成详细评价。",
+                "details": [],
+            }
+            return json.dumps(feedback, ensure_ascii=False)
 
-        basic_scores = [a.get("accuracy", 7) for a in self.answers_eval[:self.max_basic + 1]]
-        project_scores = [a.get("depth", 6) for a in self.answers_eval[self.max_basic + 1:]]
+        avg_acc = self._avg("accuracy")
+        avg_depth = self._avg("depth")
+        avg_logic = self._avg("logic")
+        avg_complete = self._avg("completeness")
+        match_score = min(10.0, 5.0 + len(self.resume.get("skills", [])) * 1.2)
 
-        avg_acc = sum(basic_scores) / len(basic_scores) if basic_scores else 7
-        avg_depth = sum(project_scores) / len(project_scores) if project_scores else 6
-        avg_logic = sum(a.get("logic", 7) for a in self.answers_eval) / len(self.answers_eval)
-        avg_comp = sum(a.get("completeness", 7) for a in self.answers_eval) / len(self.answers_eval)
-
-        skills = self.resume.get("skills", [])
-        match_score = min(len(skills) * 1.5 + 5, 10)
-
-        basic_score = avg_acc * 10
-        project_score = avg_depth * 10 + 20
-        logic_score = avg_logic * 10
-        complete_score = avg_comp * 10
-        match_score_total = match_score * 10
-
-        total = (
-                basic_score * 0.25 +
-                project_score * 0.25 +
-                logic_score * 0.20 +
-                complete_score * 0.15 +
-                match_score_total * 0.15
+        dimensions = {
+            "基础知识掌握程度": round(avg_acc * 10, 1),
+            "项目理解深度": round(avg_depth * 10, 1),
+            "回答逻辑性": round(avg_logic * 10, 1),
+            "表达完整性": round(avg_complete * 10, 1),
+            "岗位匹配度": round(match_score * 10, 1),
+        }
+        total = round(
+            dimensions["基础知识掌握程度"] * 0.25
+            + dimensions["项目理解深度"] * 0.25
+            + dimensions["回答逻辑性"] * 0.2
+            + dimensions["表达完整性"] * 0.15
+            + dimensions["岗位匹配度"] * 0.15,
+            1,
         )
 
-        prompt = f"""基于以下面试表现数据，生成一份面试评价报告（200字以内）：
+        report_prompt = f"""请根据面试评分生成 200 字以内的中文评价报告，语气专业、客观、可执行。
 
-基础知识掌握：{basic_score:.1f}/100
-项目理解深度：{project_score:.1f}/100
-回答逻辑性：{logic_score:.1f}/100
-表达完整性：{complete_score:.1f}/100
-岗位匹配度：{match_score_total:.1f}/100
-总分：{total:.1f}/100
-
-各轮评价摘要：
-{json.dumps([{"comment": a.get("comment", "")} for a in self.answers_eval], ensure_ascii=False)}
-
-要求：
-1. 指出2-3个表现好的方面
-2. 指出2-3个存在的问题
-3. 给出2-3条具体改进建议
-4. 语言专业、客观、鼓励性
+维度分：{json.dumps(dimensions, ensure_ascii=False)}
+总分：{total}
+各轮评价：{json.dumps([item.get("comment", "") for item in self.answers_eval], ensure_ascii=False)}
 """
-        report = call_qwen(prompt, temperature=0.5) or "面试完成，建议继续加强技术基础与项目表达。"
-
-        feedback = {
-            "total_score": round(total, 1),
-            "dimensions": {
-                "基础知识掌握程度": round(basic_score, 1),
-                "项目理解深度": round(project_score, 1),
-                "回答逻辑性": round(logic_score, 1),
-                "表达完整性": round(complete_score, 1),
-                "岗位匹配度": round(match_score_total, 1)
+        report = call_qwen(report_prompt, temperature=0.4) or "候选人具备一定基础，需要继续加强技术细节表达、项目复盘和方案取舍分析。"
+        return json.dumps(
+            {
+                "total_score": total,
+                "dimensions": dimensions,
+                "report": report,
+                "details": self.answers_eval,
             },
-            "report": report,
-            "details": self.answers_eval
-        }
-        return json.dumps(feedback, ensure_ascii=False)
+            ensure_ascii=False,
+        )
+
+    def _avg(self, key: str) -> float:
+        return sum(item.get(key, 6.0) for item in self.answers_eval) / len(self.answers_eval)
+
+    def _last_by_role(self, role: str) -> str:
+        for item in reversed(self.history):
+            if item["role"] == role:
+                return item["content"]
+        return ""
+
+    def _recent_questions(self, n: int = 5) -> list[str]:
+        return [
+            item["content"]
+            for item in reversed(self.history)
+            if item["role"] == "interviewer"
+        ][:n]
+
+    def _should_follow_up(self, score_key: str) -> bool:
+        if not self.answers_eval:
+            return False
+        score = self.answers_eval[-1].get(score_key, 0)
+        return self.follow_up_count < self.max_follow_up and score >= 6
+
+    def _is_repeat_complaint(self, answer: str) -> bool:
+        phrases = ["重复", "一样", "相同", "刚才问过", "已经问过", "换题", "换个问题"]
+        return any(phrase in answer for phrase in phrases)
 
 
-sessions = {}
-
-
-def create_session(resume_info):
+def create_session(resume_info: dict) -> str:
     session = InterviewSession(resume_info)
     sessions[session.session_id] = session
     return session.session_id
 
 
-def get_session(session_id):
+def get_session(session_id: str) -> InterviewSession | None:
     return sessions.get(session_id)
 
 
-def chat(session_id, user_msg):
+def chat(session_id: str, user_msg: str | None) -> tuple[str | None, bool]:
     session = get_session(session_id)
     if not session:
         return None, True
-    reply, is_end = session.next_interviewer_action(user_msg)
-    return reply, is_end
+    return session.next_interviewer_action(user_msg)

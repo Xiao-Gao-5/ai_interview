@@ -4,6 +4,7 @@ __pycache__/
 *.pyd
 
 .env
+.venv/
 venv/
 env/
 
@@ -15,5 +16,10 @@ temp_*.mp3
 
 .idea/
 .vscode/
+.workbuddy/
+.agents/
 
 model_cache/
+
+# 安装日志残留文件
+2.0.0

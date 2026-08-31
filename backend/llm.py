@@ -1,43 +1,80 @@
-import os
-from dotenv import load_dotenv
-import requests
+from __future__ import annotations
 
-load_dotenv()
+import itertools
+import logging
+from typing import Iterable
 
-API_KEY = os.getenv("DASHSCOPE_API_KEY")
-URL = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation"
+import dashscope
+from dashscope import Generation
+
+from .config import settings
+
+logger = logging.getLogger(__name__)
+
+_key_cycle: Iterable[str] | None = (
+    itertools.cycle(settings.dashscope_api_keys)
+    if settings.dashscope_api_keys
+    else None
+)
 
 
-def call_qwen(prompt, model="qwen-plus", temperature=0.7):
-    """通用 Qwen API 调用接口"""
-    if not API_KEY:
-        print("❌ 错误：未设置 DASHSCOPE_API_KEY，请检查 .env 文件")
+class LLMError(RuntimeError):
+    pass
+
+
+def _next_api_key() -> str | None:
+    if _key_cycle is None:
+        return None
+    return next(_key_cycle)
+
+
+def call_qwen(
+    prompt: str,
+    model: str | None = None,
+    temperature: float = 0.7,
+    max_tokens: int = 1200,
+) -> str | None:
+    """Call Qwen through DashScope. Returns None when cloud config is missing."""
+    api_key = _next_api_key()
+    if not api_key:
+        logger.warning("DASHSCOPE_API_KEY or DASHSCOPE_API_KEYS is not configured.")
         return None
 
-    headers = {
-        "Authorization": f"Bearer {API_KEY}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "model": model,
-        "input": {"prompt": prompt},
-        "parameters": {"temperature": temperature}
-    }
-
+    dashscope.api_key = api_key
     try:
-        response = requests.post(URL, headers=headers, json=data, timeout=30)
-        if response.status_code != 200:
-            print(f"❌ 请求失败！状态码: {response.status_code}")
-            print(f"返回内容: {response.text}")
-            return None
-        return response.json()["output"]["text"]
-    except Exception as e:
-        print(f"❌ 请求异常: {e}")
+        response = Generation.call(
+            model=model or settings.chat_model,
+            prompt=prompt,
+            result_format="text",
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+    except Exception as exc:
+        logger.warning("Qwen request failed: %s", exc)
         return None
 
+    status_code = getattr(response, "status_code", 200)
+    if status_code != 200:
+        message = getattr(response, "message", None) or str(response)
+        logger.error("Qwen request failed: %s", message)
+        return None
 
-if __name__ == "__main__":
-    result = call_qwen("你好，我是参赛选手，请鼓励我一下。")
-    if result:
-        print("✅ 大模型回复：")
-        print(result)
+    output = getattr(response, "output", None)
+    if isinstance(output, str):
+        return output.strip()
+    if isinstance(output, dict):
+        text = output.get("text")
+        return text.strip() if isinstance(text, str) else None
+    return None
+
+
+def list_models() -> dict:
+    return {
+        "chat_model": settings.chat_model,
+        "eval_model": settings.eval_model,
+        "embedding_model": settings.embedding_model,
+        "asr_model": settings.asr_model,
+        "available_chat_models": settings.available_chat_models,
+        "named_models": settings.named_models,
+        "api_key_count": len(settings.dashscope_api_keys),
+    }
