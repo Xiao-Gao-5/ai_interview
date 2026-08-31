@@ -142,11 +142,11 @@ INFO:     Application startup complete.
 
 本项目使用阿里云 DashScope（百炼）平台的大模型 API。
 
-- **API Key**：`在此填写你的DASHSCOPE_API_KEY`
+- **API Key**：见项目根目录 `.env` 文件中的 `DASHSCOPE_API_KEY`（出于安全考虑不在此公开，请自行前往[阿里云百炼控制台](https://bailian.console.aliyun.com/)申请）
 - **配置位置**：项目根目录 `.env` 文件
 - **Key 类型**：DashScope API Key（阿里云百炼控制台获取）
 
-> ⚠️ 安全提醒：此 Key 已配置在本地 `.env` 文件中，该文件已被 `.gitignore` 排除、不会上传到 GitHub。如仓库设置为公开，请前往阿里云百炼控制台重置该 Key。
+> ⚠️ 安全提醒：`.env` 文件已被 `.gitignore` 排除、不会上传到 GitHub。如仓库设置为公开，请前往阿里云百炼控制台重置该 Key。
 
 ### 各模型配置项
 
