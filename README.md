@@ -132,9 +132,9 @@ INFO:     Application startup complete.
 
 ## 三、GitHub 仓库地址
 
-**https://github.com/Xiao-Gao-5/ai-interview**
+**https://github.com/Xiao-Gao-5/ai_interview**
 
-（对应命令行方式：`git remote add origin https://github.com/Xiao-Gao-5/ai-interview.git`）
+（对应命令行方式：`git remote add origin https://github.com/Xiao-Gao-5/ai_interview.git`）
 
 ---
 
