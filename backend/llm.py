@@ -73,7 +73,6 @@ def list_models() -> dict:
         "chat_model": settings.chat_model,
         "eval_model": settings.eval_model,
         "embedding_model": settings.embedding_model,
-        "asr_model": settings.asr_model,
         "available_chat_models": settings.available_chat_models,
         "named_models": settings.named_models,
         "api_key_count": len(settings.dashscope_api_keys),

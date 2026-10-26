@@ -11,7 +11,6 @@ from fastapi.responses import FileResponse
 from backend.interview import chat, create_session, get_session
 from backend.llm import list_models
 from backend.resume_parser import extract_text_from_pdf, parse_resume
-from backend.speech import ASRError, speech_to_text
 
 app = FastAPI(title="AI Interview Backend", version="2.0.0")
 
@@ -41,21 +40,6 @@ def index():
 @app.get("/models")
 def models():
     return list_models()
-
-
-@app.post("/speech-to-text")
-async def speech_api(file: UploadFile = File(...)):
-    path = _save_upload_tmp(file)
-    try:
-        with open(path, "wb") as out:
-            out.write(await file.read())
-        text = speech_to_text(path)
-        return {"text": text}
-    except ASRError as exc:
-        return {"error": str(exc), "text": ""}
-    finally:
-        if os.path.exists(path):
-            os.remove(path)
 
 
 @app.post("/upload-resume")

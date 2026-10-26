@@ -44,7 +44,6 @@ class ModelSettings:
     chat_model: str
     eval_model: str
     embedding_model: str
-    asr_model: str
     available_chat_models: list[str]
     named_models: dict[str, Any]
 
@@ -59,7 +58,6 @@ settings = ModelSettings(
     chat_model=os.getenv("QWEN_MODEL", "qwen-plus"),
     eval_model=os.getenv("QWEN_EVAL_MODEL", os.getenv("QWEN_MODEL", "qwen-plus")),
     embedding_model=os.getenv("DASHSCOPE_EMBEDDING_MODEL", "text-embedding-v4"),
-    asr_model=os.getenv("DASHSCOPE_ASR_MODEL", "paraformer-realtime-v2"),
     available_chat_models=_split_env("QWEN_MODELS", "qwen-plus,qwen-turbo"),
     named_models=_json_env("MODEL_CONFIG_JSON", {}),
 )

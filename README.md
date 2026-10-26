@@ -14,7 +14,6 @@
 | 💬 AI 面试对话 | 基于简历 + RAG 知识库自动生成基础题与项目深挖题，支持追问、重复检测、抱怨检测 | ✅ 已完成 |
 | 📚 知识库检索 | 57 条技术面试知识点，DashScope 向量化后存入 FAISS 索引，语义检索出题 | ✅ 已完成 |
 | 📊 智能评分 | 五维度加权评分（基础/深度/逻辑/完整性/匹配度）+ LLM 文字评价报告 + 雷达图可视化 | ✅ 已完成 |
-| 🎙️ 语音识别 | DashScope ASR 接口，支持音频转文字（API 层已完成） | ✅ 已完成 |
 | 📱 前端界面 | 单页应用：上传 → 面试对话 → 评分报告三阶段流程，无框架依赖 | ✅ 已完成 |
 
 ### 2. 系统架构
@@ -31,16 +30,15 @@ main.py（FastAPI 服务，端口 8000）
       ├── nlp_scoring.py     五维度评分引擎
       ├── llm.py             Qwen 对话调用（多 Key 轮询）
       ├── embeddings.py      文本向量化
-      └── speech.py          ASR 语音识别
               │
               ▼
-       阿里云 DashScope（Qwen 对话 / text-embedding-v4 / paraformer ASR）
+       阿里云 DashScope（Qwen 对话 / text-embedding-v4）
 ```
 
 ### 3. 技术栈
 
 - **后端**：Python 3.10+ · FastAPI · uvicorn
-- **AI 能力**：阿里云 DashScope 通义千问 Qwen-plus（对话/评分）、text-embedding-v4（向量）、paraformer-realtime-v2（语音识别）
+- **AI 能力**：阿里云 DashScope 通义千问 Qwen-plus（对话/评分）、text-embedding-v4（向量）
 - **知识库**：FAISS 向量检索 + NumPy
 - **前端**：原生 HTML/CSS/JavaScript + Chart.js（雷达图）
 
@@ -61,7 +59,6 @@ ai_interview/
 │   ├── rag_engine.py           # FAISS 知识库检索
 │   ├── nlp_scoring.py          # 评分引擎
 │   ├── llm.py / embeddings.py  # 大模型与向量调用
-│   ├── speech.py               # 语音识别
 │   └── build_knowledge_base.py # 知识库构建工具
 ├── data/                       # FAISS 索引（已预构建）
 └── README.md                   # 本说明文档
@@ -156,7 +153,6 @@ INFO:     Application startup complete.
 | `QWEN_MODEL` | qwen-plus | 面试官对话 |
 | `QWEN_EVAL_MODEL` | qwen-plus | 回答评分 |
 | `DASHSCOPE_EMBEDDING_MODEL` | text-embedding-v4 | 简历/题目向量化 |
-| `DASHSCOPE_ASR_MODEL` | paraformer-realtime-v2 | 语音识别 |
 
 ---
 
@@ -170,7 +166,6 @@ INFO:     Application startup complete.
 | POST | `/start-interview` | 创建会话并开始面试 |
 | POST | `/chat` | 面试对话（一问一答） |
 | POST | `/end-interview` | 主动结束并生成评分 |
-| POST | `/speech-to-text` | 上传音频识别为文字 |
 
 ---
 
