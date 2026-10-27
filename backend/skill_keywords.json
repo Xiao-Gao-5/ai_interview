@@ -1,0 +1,26 @@
+{
+  "skills": [
+    "python", "java", "c++", "c#", "javascript", "typescript", "go", "rust",
+    "fastapi", "flask", "django", "spring boot", "springboot", "nodejs",
+    "mysql", "redis", "mongodb", "postgresql", "elasticsearch",
+    "linux", "docker", "kubernetes", "git", "jenkins",
+    "react", "vue", "html", "css",
+    "pandas", "numpy", "scikit-learn",
+    "aws", "azure", "阿里云", "腾讯云",
+    "nginx", "rabbitmq", "kafka", "rocketmq", "zookeeper",
+    "restful", "graphql", "grpc", "websocket", "rpc"
+  ],
+  "aliases": {
+    "js": "javascript",
+    "node.js": "nodejs",
+    "node": "nodejs",
+    "golang": "go",
+    "k8s": "kubernetes",
+    "postgres": "postgresql",
+    "pg": "postgresql",
+    "es": "elasticsearch",
+    "springboot": "spring boot",
+    "scikit": "scikit-learn",
+    "sklearn": "scikit-learn"
+  }
+}

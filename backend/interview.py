@@ -88,6 +88,11 @@ class InterviewSession:
         self.history.append({"role": "interviewer", "content": content})
 
     def _extract_projects(self) -> list[str]:
+        # 优先消费 resume_parser 返回的 projects（单一数据源，解析与出题不再各写一套）
+        if self.resume.get("projects"):
+            return self.resume["projects"][:3]
+
+        # 兜底：旧数据（无 projects 字段）仍走原有切分逻辑
         text = self.resume.get("experience") or self.resume.get("raw_text", "")
         if not text:
             return ["候选人的简历中未提取到明确项目，请围绕其技能栈展开项目经验追问。"]

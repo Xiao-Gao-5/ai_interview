@@ -216,6 +216,11 @@
                 const data = await res.json();
                 resumeData = data.result;
 
+                // 解析器返回 warning（如扫描件 PDF 无文字层）时明确告知用户原因
+                if (resumeData.warning) {
+                    alert(resumeData.warning);
+                }
+
                 const skillsContainer = document.getElementById("skills");
                 skillsContainer.innerHTML = "";
                 if (resumeData.skills && resumeData.skills.length > 0) {
